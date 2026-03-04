@@ -9,6 +9,9 @@ __pycache__/
 # Node (frontend)
 node_modules/
 
+# Local/custom PWA icons (use config/icons in repo or your own copy)
+my_icons/
+
 # Distribution / packaging
 .Python
 build/

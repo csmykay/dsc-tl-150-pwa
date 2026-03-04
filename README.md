@@ -190,6 +190,22 @@ docker compose up -d --build
 
 From then on, all config and zone names live under `/opt/dsc-panel/config`. You can backup that directory, change PIN/password there, and restart the container without rebuilding.
 
+**PWA icons:** The app serves favicon and PWA icons from `config/icons/`. When using an external config path, put your icon files in that directory so the container sees them at `/app/config/icons/`. Example with a host config under your home directory:
+
+```bash
+# Example: config at ~/docker-data/dsc-panel/config
+mkdir -p ~/docker-data/dsc-panel/config/icons
+cp dsc-panel/config/.env.example ~/docker-data/dsc-panel/config/.env
+# Add your own icons (e.g. icon-16x16.png … icon-512x512.png, icon-maskable-512.png, apple-touch-icon.png)
+# Then in docker-compose.yml or docker-compose.override.yml:
+#   volumes:
+#     - /home/YOUR_USER/docker-data/dsc-panel/config:/app/config
+#   env_file:
+#     - /home/YOUR_USER/docker-data/dsc-panel/config/.env
+```
+
+The app serves whatever PNGs (and optional `favicon.ico`) you place in `config/icons/`; the manifest and page link to `/icons/icon-32x32.png`, `/icons/apple-touch-icon.png`, etc.
+
 ### General best practices
 
 | Practice | Why |
@@ -226,6 +242,7 @@ dsc-panel/
 ├── config/
 │   ├── .env.example        # Template for config/.env
 │   ├── .env                # Your secrets (create from .env.example)
+│   ├── icons/              # PWA icons (optional; icon-16x16.png … icon-512x512.png, apple-touch-icon.png)
 │   └── zone_names.json     # Created on first run; editable zone labels
 ├── backend/
 │   ├── main.py             # FastAPI app, SSE, zone names, status

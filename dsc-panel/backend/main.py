@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from scraper import PanelStatus, TL150Scraper
 
@@ -34,6 +34,10 @@ def _zone_limit() -> int:
 
 def _app_title() -> str:
     return os.environ.get("APP_TITLE", "Home Security").strip() or "Home Security"
+
+
+def _short_name() -> str:
+    return os.environ.get("APP_SHORT_NAME", "Home").strip() or "Home"
 
 
 current_status: Optional[PanelStatus] = None
@@ -208,7 +212,7 @@ async def disarm():
 
 @app.get("/api/config")
 async def get_config():
-    return {"app_title": _app_title(), "zone_limit": _zone_limit()}
+    return {"app_title": _app_title(), "short_name": _short_name(), "zone_limit": _zone_limit()}
 
 
 @app.get("/api/zone-names")
@@ -259,6 +263,57 @@ async def sse_events():
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
+
+
+# PWA manifest (name/short_name from env; icons served from config/icons at /icons/)
+PWA_ICONS = [
+    {"src": "/icons/icon-16x16.png", "sizes": "16x16", "type": "image/png"},
+    {"src": "/icons/icon-32x32.png", "sizes": "32x32", "type": "image/png"},
+    {"src": "/icons/icon-48x48.png", "sizes": "48x48", "type": "image/png"},
+    {"src": "/icons/icon-64x64.png", "sizes": "64x64", "type": "image/png"},
+    {"src": "/icons/icon-96x96.png", "sizes": "96x96", "type": "image/png"},
+    {"src": "/icons/icon-128x128.png", "sizes": "128x128", "type": "image/png"},
+    {"src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icons/icon-256x256.png", "sizes": "256x256", "type": "image/png"},
+    {"src": "/icons/icon-384x384.png", "sizes": "384x384", "type": "image/png"},
+    {"src": "/icons/icon-512x512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+]
+
+
+@app.get("/manifest.webmanifest")
+async def manifest():
+    return JSONResponse(
+        {
+            "name": _app_title(),
+            "short_name": _short_name(),
+            "description": "Home monitoring and security system",
+            "start_url": "/",
+            "scope": "/",
+            "display": "standalone",
+            "orientation": "portrait",
+            "background_color": "#ffffff",
+            "theme_color": "#1a73e8",
+            "icons": PWA_ICONS,
+        },
+        media_type="application/manifest+json",
+    )
+
+
+@app.get("/icons/{filename:path}")
+async def serve_icon(filename: str):
+    """Serve PWA icons from config/icons (host-mounted)."""
+    if ".." in filename or filename.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    icons_dir = Path(CONFIG_DIR) / "icons"
+    filepath = (icons_dir / filename).resolve()
+    try:
+        filepath.relative_to(icons_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not filepath.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(filepath)
 
 
 @app.get("/{path:path}")
