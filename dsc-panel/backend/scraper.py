@@ -39,6 +39,12 @@ class TL150Scraper:
         self._pin = os.environ.get("DSC_PIN", "")
         self._client: Optional[httpx.AsyncClient] = None
 
+    def _browser_headers(self) -> dict[str, str]:
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0",
+            "Referer": f"{self._base}/2",
+        }
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
@@ -109,9 +115,9 @@ class TL150Scraper:
                 if a_val == "3":
                     armed = False
                     arm_mode = None
-                elif a_val == "1":
+                elif a_val in ("1", "4"):
                     armed = True
-                    arm_mode = "away"
+                    arm_mode = "away" if a_val == "1" else "stay"
         for td in soup.find_all("td", bgcolor=True):
             bg = (td.get("bgcolor") or "").upper()
             text = (td.get_text() or "").strip().upper()
@@ -132,27 +138,17 @@ class TL150Scraper:
         await self._send_command(2)
 
     async def disarm(self) -> None:
-        await self._send_command(1)
+        await self._send_command(4)  # TL-150 form uses A=4 for DISARM (A=1 is not disarm on this firmware)
 
     async def _send_command(self, a: int) -> None:
         client = await self._get_client()
-        try:
-            r = await client.get(
-                f"{self._base}/2",
-                params={"A": a, "p": 1, "X": self._pin},
-            )
-            if r.status_code >= 400:
-                log.warning(
-                    "TL-150 command A=%s failed: status=%s body=%s",
-                    a, r.status_code, r.text[:500] if r.text else "",
-                )
-            r.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            log.warning(
-                "TL-150 command A=%s HTTP error: %s %s",
-                a, e.response.status_code, (e.response.text or "")[:500],
-            )
-            raise
-        except Exception as e:
-            log.exception("TL-150 command A=%s failed: %s", a, e)
-            raise
+        url = f"{self._base}/2"
+        params = {"A": a, "p": 1, "X": self._pin}
+        headers = self._browser_headers()
+        # Some TL-150 firmware only runs the command if the request looks like a form
+        # follow-up: load the page first (session/cookie), then send command with Referer.
+        await client.get(url, headers=headers)
+        r = await client.get(url, params=params, headers=headers)
+        if r.status_code >= 400:
+            log.warning("TL-150 command A=%s failed: status=%s body=%s", a, r.status_code, (r.text or "")[:300])
+        r.raise_for_status()

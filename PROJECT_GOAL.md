@@ -295,7 +295,7 @@ The entire UI in one Svelte component.
 | Status page   | GET    | `/2`                         | Main homeowner page            |
 | Arm Away      | GET    | `/2?A=3&p=1&X=<PIN>`         | Confirmed from HTML form       |
 | Arm Stay      | GET    | `/2?A=2&p=1&X=<PIN>`         | Inferred (standard DSC codes)  |
-| Disarm        | GET    | `/2?A=1&p=1&X=<PIN>`         | Inferred (only shown when armed)|
+| Disarm        | GET    | `/2?A=4&p=1&X=<PIN>`         | From TL-150 form (DISARM button uses A=4) |
 | Change PIN    | GET    | `/2?A=7&X=<PIN>`             | Seen in HTML, not used by app  |
 | Admin/Config  | GET    | `/0`                         | Admin page, not used by app    |
 
@@ -303,7 +303,7 @@ The entire UI in one Svelte component.
 
 | Param | Meaning              | Values                        |
 |-------|----------------------|-------------------------------|
-| `A`   | Action code          | 1=disarm, 2=arm stay, 3=arm away, 7=change PIN |
+| `A`   | Action code          | 1=arm away (form when disarmed), 2=arm stay, 3=arm away, 4=disarm, 7=change PIN |
 | `p`   | Partition number     | `1` (single partition setup)  |
 | `X`   | User keypad PIN      | 4–6 digit string              |
 
@@ -329,7 +329,7 @@ Open zones are additionally identified by `OPEN` appearing in the `TITLE` attrib
 
 Armed state is determined by which form is present in the HTML:
 - ARM form (`A=3`) present → system is **disarmed**
-- DISARM form (`A=1`) present → system is **armed**
+- DISARM form (`A=1` or `A=4`) present → system is **armed** (some firmware uses A=4 for disarm button)
 
 This is more reliable than color-based detection because the TL-150 explicitly gates which form you see based on actual panel state.
 
