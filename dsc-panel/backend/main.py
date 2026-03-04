@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -21,15 +22,53 @@ CONFIG_DIR = os.environ.get("CONFIG_DIR", "/app/config")
 ZONE_NAMES_FILE = os.path.join(CONFIG_DIR, "zone_names.json")
 
 
-def _zone_limit() -> int:
-    n = os.environ.get("ZONE_LIMIT", "16").strip()
+def _parse_zone_spec(spec: str) -> list[int]:
+    """Parse ZONE_LIMIT: whole number (8/16/32) or comma-separated list of N or N-M. Returns sorted unique zone numbers 1..32."""
+    spec = spec.strip()
+    if not spec:
+        return list(range(1, 17))
+    # Single whole number (legacy): 8, 16, or 32
     try:
-        v = int(n)
+        v = int(spec)
         if v in (8, 16, 32):
-            return v
+            return list(range(1, v + 1))
     except ValueError:
         pass
-    return 16
+    # Comma-separated: "1-8,10,12,14" or "1-4,8,10,30-32"
+    result: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, b = part.split("-", 1)
+            try:
+                lo, hi = int(a.strip()), int(b.strip())
+                if 1 <= lo <= hi <= 32:
+                    result.extend(range(lo, hi + 1))
+            except ValueError:
+                continue
+        else:
+            try:
+                n = int(part)
+                if 1 <= n <= 32:
+                    result.append(n)
+            except ValueError:
+                continue
+    # Sorted, unique, preserve order of first occurrence
+    seen: set[int] = set()
+    out: list[int] = []
+    for n in sorted(result):
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out if out else list(range(1, 17))
+
+
+def _zone_numbers() -> list[int]:
+    return _parse_zone_spec(os.environ.get("ZONE_LIMIT", "16").strip())
+
+
+def _zone_limit() -> int:
+    return len(_zone_numbers())
 
 
 def _app_title() -> str:
@@ -37,7 +76,10 @@ def _app_title() -> str:
 
 
 def _short_name() -> str:
-    return os.environ.get("APP_SHORT_NAME", "Home").strip() or "Home"
+    name = os.environ.get("APP_SHORT_NAME", "Home").strip() or "Home"
+    # Ensure space after apostrophe-s (e.g. "Smykay'sHouse" -> "Smykay's House")
+    name = re.sub(r"'s([A-Z])", r"'s \1", name)
+    return name
 
 
 current_status: Optional[PanelStatus] = None
@@ -50,19 +92,30 @@ def _default_zone_names(limit: int | None = None) -> dict[str, str]:
     return {str(i): f"Zone {i}" for i in range(1, limit + 1)}
 
 
+def _default_zone_names_from_list(zone_nums: list[int]) -> dict[str, str]:
+    return {str(i): f"Zone {i}" for i in zone_nums}
+
+
 def load_zone_names() -> dict[str, str]:
-    limit = _zone_limit()
+    zone_nums = _zone_numbers()
     path = Path(ZONE_NAMES_FILE)
     if not path.is_file():
-        return _default_zone_names(limit)
+        return _default_zone_names_from_list(zone_nums)
     try:
         with open(path, "r") as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            return _default_zone_names(limit)
-        return {str(k): str(v) for k, v in data.items() if 1 <= int(k) <= limit}
+            return _default_zone_names_from_list(zone_nums)
+        out = {}
+        for k, v in data.items():
+            try:
+                if int(k) in zone_nums:
+                    out[str(k)] = str(v)
+            except (TypeError, ValueError):
+                pass
+        return out
     except Exception:
-        return _default_zone_names(limit)
+        return _default_zone_names_from_list(zone_nums)
 
 
 def save_zone_names(names: dict[str, str]) -> None:
@@ -75,17 +128,18 @@ def save_zone_names(names: dict[str, str]) -> None:
 def status_to_dict(s: Optional[PanelStatus]) -> dict:
     if s is None:
         raise HTTPException(status_code=503, detail="Status not yet available")
-    limit = _zone_limit()
+    zone_nums = _zone_numbers()
     zone_names = load_zone_names()
-    zones_slice = s.zones[:limit]
+    zone_by_num = {z.number: z for z in s.zones}
     zones_payload = []
-    for z in zones_slice:
-        name = zone_names.get(str(z.number), f"Zone {z.number}")
+    for num in zone_nums:
+        z = zone_by_num.get(num)
+        name = zone_names.get(str(num), f"Zone {num}")
         zones_payload.append({
-            "number": z.number,
+            "number": num,
             "name": name,
-            "state": z.state,
-            "last_activity": z.last_activity,
+            "state": z.state if z else "closed",
+            "last_activity": z.last_activity if z else "",
         })
     return {
         "armed": s.armed,
@@ -94,7 +148,8 @@ def status_to_dict(s: Optional[PanelStatus]) -> dict:
         "trouble": s.trouble,
         "raw_system_color": s.raw_system_color,
         "app_title": _app_title(),
-        "zone_limit": limit,
+        "zone_limit": len(zone_nums),
+        "zone_numbers": zone_nums,
         "zones": zones_payload,
     }
 
@@ -124,7 +179,7 @@ async def lifespan(app: FastAPI):
     global poll_task
     Path(CONFIG_DIR).mkdir(parents=True, exist_ok=True)
     if not Path(ZONE_NAMES_FILE).is_file():
-        save_zone_names(_default_zone_names(_zone_limit()))
+        save_zone_names(_default_zone_names_from_list(_zone_numbers()))
     scraper = TL150Scraper()
     poll_task = asyncio.create_task(poll_loop(scraper))
     yield
@@ -212,7 +267,8 @@ async def disarm():
 
 @app.get("/api/config")
 async def get_config():
-    return {"app_title": _app_title(), "short_name": _short_name(), "zone_limit": _zone_limit()}
+    zn = _zone_numbers()
+    return {"app_title": _app_title(), "short_name": _short_name(), "zone_limit": len(zn), "zone_numbers": zn}
 
 
 @app.get("/api/zone-names")
@@ -222,16 +278,16 @@ async def get_zone_names():
 
 @app.put("/api/zone-names")
 async def put_zone_names(body: dict):
-    limit = _zone_limit()
+    zone_nums = _zone_numbers()
     names = {}
     for k, v in body.items():
         try:
             n = int(k)
-            if 1 <= n <= limit:
+            if n in zone_nums:
                 names[str(n)] = str(v) if v else f"Zone {n}"
         except (TypeError, ValueError):
             continue
-    for i in range(1, limit + 1):
+    for i in zone_nums:
         if str(i) not in names:
             names[str(i)] = f"Zone {i}"
     save_zone_names(names)

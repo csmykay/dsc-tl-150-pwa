@@ -18,6 +18,7 @@
   let appTitle = 'Home Security';
 
   $: zoneLimit = status?.zone_limit ?? 16;
+  $: zoneNumbers = status?.zone_numbers ?? Array.from({ length: zoneLimit }, (_, i) => i + 1);
   $: if (status?.app_title) appTitle = status.app_title;
 
   $: panelState = !status ? 'unknown'
@@ -30,7 +31,7 @@
   $: openZones = status?.zones?.filter((z) => z.state === 'open') ?? [];
   $: zonesList = (() => {
     const list = [];
-    for (let i = 1; i <= zoneLimit; i++) {
+    for (const i of zoneNumbers) {
       const z = status?.zones?.find((x) => x.number === i);
       list.push({
         number: i,
@@ -79,7 +80,7 @@
 
   async function persistZoneNames(zoneNumber) {
     const toSave = {};
-    for (let i = 1; i <= zoneLimit; i++) {
+    for (const i of zoneNumbers) {
       toSave[String(i)] = zoneNames[i] ?? zoneNames[String(i)] ?? `Zone ${i}`;
     }
     try {

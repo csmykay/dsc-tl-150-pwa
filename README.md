@@ -28,11 +28,11 @@ The PWA runs as a **single Docker container**:
 | **Frontend** | SvelteKit (adapter-static) | Single-page UI: one clickable status circle (Ready + Arm, or Armed + Disarm), zones in 2 columns with editable names and green/red status. Built to static HTML/JS/CSS at image build time. |
 | **Backend** | FastAPI (Python) | Serves static app, REST API (`/api/config`, `/api/status`, `/api/arm/stay`, `/api/disarm`, `/api/zone-names`), and Server-Sent Events (`/api/events`) for real-time updates. |
 | **Scraper** | httpx + BeautifulSoup | Polls the TL-150’s HTTP interface (no official API); parses HTML to read arm state and zones, and sends arm/disarm via GET with PIN. |
-| **Config** | Host-mounted volume | `./config` holds `.env` (TL-150 credentials, PIN, optional `APP_TITLE`, `ZONE_LIMIT`) and `zone_names.json` (editable zone labels). No rebuild needed to change PIN, password, title, or zone count. |
+| **Config** | Host-mounted volume | `./config` holds `.env` (TL-150 credentials, PIN, optional `APP_TITLE`, `ZONE_LIMIT`, `APP_SHORT_NAME`) and `zone_names.json` (editable zone labels). No rebuild needed to change PIN, password, title, or zone list. |
 
 - The backend polls the TL-150 every 10 seconds (configurable) and pushes status to all connected browsers over SSE.
 - Arm/Disarm: one clickable circle—click to arm (stay) or disarm; no separate buttons. The circle shows “Ready” + “Arm” when disarmed, “Armed” + “Disarm” when armed.
-- Zone count is configurable: set `ZONE_LIMIT=8`, `16`, or `32` in `config/.env`. Zone names are stored in `config/zone_names.json` and survive container rebuilds.
+- Zones shown are configurable: set `ZONE_LIMIT` in `config/.env` to a whole count (`8`, `16`, or `32`) or a list with ranges (e.g. `1-8,10,12,14` or `1-4,8,10,30-32`). Zone names are stored in `config/zone_names.json` and survive container rebuilds.
 - App title is configurable: set `APP_TITLE=My Home Security` (or any string) in `config/.env`; it appears in the header and browser tab.
 
 ---
@@ -82,7 +82,7 @@ Edit `config/.env` and set:
 - `DSC_PIN` — Your panel keypad PIN (used for arm/disarm)
 - Optionally `APP_TITLE` — Title in the header and browser tab (default: Home Security)
 - Optionally `POLL_SECS` — Poll interval in seconds (default `10`)
-- Optionally `ZONE_LIMIT` — Number of zones to show: `8`, `16`, or `32` (default `16`)
+- Optionally `ZONE_LIMIT` — Zones to show: whole count `8`, `16`, or `32`, or a list with ranges (e.g. `1-8,10,12,14` or `1-4,8,10,30-32`) (default `16`)
 
 ### 3. Build and start the container
 
@@ -102,7 +102,7 @@ Open **http://\<your-server-ip\>:8000** in a browser (or over VPN). You should s
 
 ### 5. Changing PIN, password, title, or zone count later
 
-Edit `config/.env` (e.g. `DSC_PASS`, `DSC_PIN`, `APP_TITLE`, `ZONE_LIMIT`), then:
+Edit `config/.env` (e.g. `DSC_PASS`, `DSC_PIN`, `APP_TITLE`, `ZONE_LIMIT`, `APP_SHORT_NAME`), then:
 
 ```bash
 docker compose restart
