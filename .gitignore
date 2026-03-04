@@ -12,6 +12,9 @@ node_modules/
 # Local/custom PWA icons (use config/icons in repo or your own copy)
 my_icons/
 
+# Local deploy script (personal deployment only)
+deploy.sh
+
 # Distribution / packaging
 .Python
 build/
