@@ -1,0 +1,9 @@
+{
+  "zone_list": "1-6",
+  "app_title": "Home Security",
+  "app_short_name": "Security",
+  "poll_secs": 5,
+  "arming_countdown_secs": 60,
+  "zone_columns": 1,
+  "default_arm_mode": "away"
+}

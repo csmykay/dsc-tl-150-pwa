@@ -1,12 +1,12 @@
 /** @typedef {{ number: number; name?: string; state: string; last_activity: string }} Zone */
-/** @typedef {{ app_title?: string; armed: boolean; arm_mode: string|null; ready: boolean; trouble: boolean; raw_system_color: string; zone_limit?: number; zone_numbers?: number[]; zones: Zone[] }} Status */
-/** @typedef {{ app_title: string; zone_limit: number; zone_numbers?: number[] }} AppConfig */
+/** @typedef {{ app_title?: string; armed: boolean; arm_mode: string|null; ready: boolean; trouble: boolean; raw_system_color: string; zone_limit?: number; zone_numbers?: number[]; zone_columns?: number; zones: Zone[] }} Status */
+/** @typedef {{ app_title: string; zone_limit: number; zone_numbers?: number[]; arming_countdown_secs?: number; zone_columns?: number; default_arm_mode?: string }} AppConfig */
 
 /**
  * @returns {Promise<AppConfig>}
  */
 export async function fetchConfig() {
-  const r = await fetch('/api/config');
+  const r = await fetch('/api/config', { cache: 'no-store' });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -16,7 +16,7 @@ export async function fetchConfig() {
  * @returns {Promise<ZoneNames>}
  */
 export async function fetchZoneNames() {
-  const r = await fetch('/api/zone-names');
+  const r = await fetch('/api/zone-names', { cache: 'no-store' });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -39,7 +39,7 @@ export async function saveZoneNames(names) {
  * @returns {Promise<Status>}
  */
 export async function fetchStatus() {
-  const r = await fetch('/api/status');
+  const r = await fetch('/api/status', { cache: 'no-store' });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -47,7 +47,16 @@ export async function fetchStatus() {
 /**
  * @returns {Promise<{ ok: boolean; action: string }>}
  */
-export async function arm() {
+export async function armStay() {
+  const r = await fetch('/api/arm/stay', { method: 'POST' });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+/**
+ * @returns {Promise<{ ok: boolean; action: string }>}
+ */
+export async function armAway() {
   const r = await fetch('/api/arm/away', { method: 'POST' });
   if (!r.ok) throw new Error(await r.text());
   return r.json();

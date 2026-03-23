@@ -13,13 +13,29 @@ from typing import Optional
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
+# Avoid stale zone_columns / titles in browsers that cache GET /api/config or /api/status.
+_JSON_NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _json_no_store(data: dict) -> JSONResponse:
+    return JSONResponse(data, headers=_JSON_NO_STORE)
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
 from scraper import PanelStatus, TL150Scraper
+from settings_store import (
+    SETTINGS_FILE,
+    ZONE_NAMES_JSON,
+    get_zone_names_map,
+    load_settings,
+    migrate_from_env_and_legacy,
+    migrate_zone_names_out_of_settings_txt,
+    save_settings,
+    set_zone_names_map,
+)
 
 CONFIG_DIR = os.environ.get("CONFIG_DIR", "/app/config")
-ZONE_NAMES_FILE = os.path.join(CONFIG_DIR, "zone_names.json")
 
 
 def _parse_zone_spec(spec: str) -> list[int]:
@@ -64,7 +80,18 @@ def _parse_zone_spec(spec: str) -> list[int]:
 
 
 def _zone_numbers() -> list[int]:
-    return _parse_zone_spec(os.environ.get("ZONE_LIMIT", "16").strip())
+    raw = load_settings().get("zone_list") or "16"
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for x in raw:
+            try:
+                parts.append(str(int(x)))
+            except (TypeError, ValueError):
+                continue
+        spec = ",".join(parts) if parts else "16"
+    else:
+        spec = str(raw).strip() or "16"
+    return _parse_zone_spec(spec)
 
 
 def _zone_limit() -> int:
@@ -72,14 +99,29 @@ def _zone_limit() -> int:
 
 
 def _app_title() -> str:
-    return os.environ.get("APP_TITLE", "Home Security").strip() or "Home Security"
+    t = str(load_settings().get("app_title") or "Home Security").strip()
+    return t or "Home Security"
 
 
 def _short_name() -> str:
-    name = os.environ.get("APP_SHORT_NAME", "Home").strip() or "Home"
+    name = str(load_settings().get("app_short_name") or "Home").strip() or "Home"
     # Ensure space after apostrophe-s (e.g. "Smykay'sHouse" -> "Smykay's House")
     name = re.sub(r"'s([A-Z])", r"'s \1", name)
     return name
+
+
+def _effective_zone_columns() -> int:
+    """Clamped 1–3 from settings.txt (same value for /api/config and /api/status)."""
+    cols = load_settings().get("zone_columns", 2)
+    try:
+        if isinstance(cols, str):
+            cols = cols.strip()
+        if cols == "":
+            return 2
+        n = int(float(cols))
+        return min(3, max(1, n))
+    except (TypeError, ValueError):
+        return 2
 
 
 current_status: Optional[PanelStatus] = None
@@ -97,32 +139,20 @@ def _default_zone_names_from_list(zone_nums: list[int]) -> dict[str, str]:
 
 
 def load_zone_names() -> dict[str, str]:
+    """Labels for every zone in zone_list; text only from zone_names.json (or default Zone N)."""
     zone_nums = _zone_numbers()
-    path = Path(ZONE_NAMES_FILE)
-    if not path.is_file():
+    data = get_zone_names_map()
+    if not data:
         return _default_zone_names_from_list(zone_nums)
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return _default_zone_names_from_list(zone_nums)
-        out = {}
-        for k, v in data.items():
-            try:
-                if int(k) in zone_nums:
-                    out[str(k)] = str(v)
-            except (TypeError, ValueError):
-                pass
-        return out
-    except Exception:
-        return _default_zone_names_from_list(zone_nums)
+    out = {}
+    for num in zone_nums:
+        sk = str(num)
+        out[sk] = str(data.get(sk) or f"Zone {num}")
+    return out
 
 
 def save_zone_names(names: dict[str, str]) -> None:
-    Path(CONFIG_DIR).mkdir(parents=True, exist_ok=True)
-    path = Path(ZONE_NAMES_FILE)
-    with open(path, "w") as f:
-        json.dump(names, f, indent=2)
+    set_zone_names_map(names)
 
 
 def status_to_dict(s: Optional[PanelStatus]) -> dict:
@@ -150,14 +180,16 @@ def status_to_dict(s: Optional[PanelStatus]) -> dict:
         "app_title": _app_title(),
         "zone_limit": len(zone_nums),
         "zone_numbers": zone_nums,
+        "zone_columns": _effective_zone_columns(),
         "zones": zones_payload,
     }
 
 
 async def poll_loop(scraper: TL150Scraper) -> None:
     global current_status
-    poll_secs = int(os.environ.get("POLL_SECS", "10"))
     while True:
+        poll_secs = int(load_settings().get("poll_secs") or 10)
+        poll_secs = max(3, min(120, poll_secs))
         try:
             current_status = await scraper.fetch_status()
             payload = json.dumps(status_to_dict(current_status))
@@ -174,12 +206,34 @@ async def poll_loop(scraper: TL150Scraper) -> None:
         await asyncio.sleep(poll_secs)
 
 
+def _ensure_zone_names_defaults() -> None:
+    migrate_from_env_and_legacy()
+    migrate_zone_names_out_of_settings_txt()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global poll_task
     Path(CONFIG_DIR).mkdir(parents=True, exist_ok=True)
-    if not Path(ZONE_NAMES_FILE).is_file():
-        save_zone_names(_default_zone_names_from_list(_zone_numbers()))
+    _ensure_zone_names_defaults()
+    settings_path = Path(SETTINGS_FILE)
+    settings_exists = settings_path.is_file()
+    if not settings_exists:
+        log.warning(
+            "Missing %s — using built-in defaults (e.g. app_title 'Home Security'). "
+            "The app never reads settings.txt.example at runtime; mount or create settings.txt on the host path that maps to /app/config.",
+            SETTINGS_FILE,
+        )
+    s = load_settings(force_reload=True)
+    log.info(
+        "Config: CONFIG_DIR=%s settings.txt exists=%s | app_title=%r | zone_list=%r zone_columns=%s zone_numbers=%s",
+        CONFIG_DIR,
+        settings_exists,
+        s.get("app_title"),
+        s.get("zone_list"),
+        _effective_zone_columns(),
+        _zone_numbers(),
+    )
     scraper = TL150Scraper()
     poll_task = asyncio.create_task(poll_loop(scraper))
     yield
@@ -199,7 +253,7 @@ app = FastAPI(lifespan=lifespan)
 async def get_status():
     if current_status is None:
         raise HTTPException(status_code=503, detail="Status not yet available")
-    return status_to_dict(current_status)
+    return _json_no_store(status_to_dict(current_status))
 
 
 @app.post("/api/arm/away")
@@ -265,32 +319,72 @@ async def disarm():
         await scraper.close()
 
 
+@app.get("/api/debug/settings")
+async def debug_settings():
+    """What the app resolved from disk (LAN-only; remove or protect if exposing to internet)."""
+    s = load_settings(force_reload=True)
+    return _json_no_store(
+        {
+            "settings_file": SETTINGS_FILE,
+            "zone_names_json": ZONE_NAMES_JSON,
+            "config_dir": CONFIG_DIR,
+            "zone_list_raw": s.get("zone_list"),
+            "zone_columns_raw": s.get("zone_columns"),
+            "zone_columns_effective": _effective_zone_columns(),
+            "zone_numbers": _zone_numbers(),
+        }
+    )
+
+
 @app.get("/api/config")
 async def get_config():
     zn = _zone_numbers()
-    return {"app_title": _app_title(), "short_name": _short_name(), "zone_limit": len(zn), "zone_numbers": zn}
+    s = load_settings()
+    raw_mode = str(s.get("default_arm_mode") or "stay").strip().lower()
+    mode = raw_mode if raw_mode in ("stay", "away") else "stay"
+    cols = _effective_zone_columns()
+    ac = s.get("arming_countdown_secs", 45)
+    try:
+        ac = min(300, max(5, int(ac)))
+    except (TypeError, ValueError):
+        ac = 45
+    return _json_no_store(
+        {
+            "app_title": _app_title(),
+            "short_name": _short_name(),
+            "zone_limit": len(zn),
+            "zone_numbers": zn,
+            "arming_countdown_secs": ac,
+            "zone_columns": cols,
+            "default_arm_mode": mode,
+        }
+    )
 
 
 @app.get("/api/zone-names")
 async def get_zone_names():
-    return load_zone_names()
+    return _json_no_store(load_zone_names())
 
 
 @app.put("/api/zone-names")
 async def put_zone_names(body: dict):
-    zone_nums = _zone_numbers()
+    """Update zone_names.json: only zone name strings; which zones exist comes from settings.txt zone_list."""
+    allowed = set(_zone_numbers())
+    existing = get_zone_names_map()
     names = {}
+    for n in allowed:
+        sk = str(n)
+        if sk in existing:
+            names[sk] = existing[sk]
     for k, v in body.items():
         try:
             n = int(k)
-            if n in zone_nums:
+            if n in allowed:
                 names[str(n)] = str(v) if v else f"Zone {n}"
         except (TypeError, ValueError):
             continue
-    for i in zone_nums:
-        if str(i) not in names:
-            names[str(i)] = f"Zone {i}"
     save_zone_names(names)
+    log.info("Zone names saved to %s", ZONE_NAMES_JSON)
     return {"ok": True}
 
 

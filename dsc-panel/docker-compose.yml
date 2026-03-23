@@ -1,3 +1,9 @@
+# App reads ONLY files inside the mount at /app/config:
+#   settings.txt (JSON), zone_names.json, .env (via env_file below), icons/
+# It does NOT read settings.txt.example (that's a repo template).
+# Use a bind mount to your persistent folder, e.g. ./config or an absolute path.
+# If you switch this to a named Docker volume, the volume starts empty unless you
+# populate it — missing settings.txt => defaults (title "Home Security", 16 zones, etc.).
 services:
   dsc-panel:
     build: .

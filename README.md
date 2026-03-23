@@ -28,12 +28,13 @@ The PWA runs as a **single Docker container**:
 | **Frontend** | SvelteKit (adapter-static) | Single-page UI: one clickable status circle (Ready + Arm, or Armed + Disarm), zones in 2 columns with editable names and green/red status. Built to static HTML/JS/CSS at image build time. |
 | **Backend** | FastAPI (Python) | Serves static app, REST API (`/api/config`, `/api/status`, `/api/arm/stay`, `/api/disarm`, `/api/zone-names`), and Server-Sent Events (`/api/events`) for real-time updates. |
 | **Scraper** | httpx + BeautifulSoup | Polls the TL-150’s HTTP interface (no official API); parses HTML to read arm state and zones, and sends arm/disarm via GET with PIN. |
-| **Config** | Host-mounted volume | `./config` holds `.env` (TL-150 credentials, PIN, optional `APP_TITLE`, `ZONE_LIMIT`, `APP_SHORT_NAME`) and `zone_names.json` (editable zone labels). No rebuild needed to change PIN, password, title, or zone list. |
+| **Config** | Host-mounted volume | `./config` holds **`.env`** (security: TL-150 credentials + PIN), **`settings.txt`** (app logic: zones list, layout, titles, poll, arm mode, etc.), and **`zone_names.json`** (custom zone labels only). See `dsc-panel/config/README.md`. No rebuild needed for most changes. |
 
 - The backend polls the TL-150 every 10 seconds (configurable) and pushes status to all connected browsers over SSE.
 - Arm/Disarm: one clickable circle—click to arm (stay) or disarm; no separate buttons. The circle shows “Ready” + “Arm” when disarmed, “Armed” + “Disarm” when armed.
-- Zones shown are configurable: set `ZONE_LIMIT` in `config/.env` to a whole count (`8`, `16`, or `32`) or a list with ranges (e.g. `1-8,10,12,14` or `1-4,8,10,30-32`). Zone names are stored in `config/zone_names.json` and survive container rebuilds.
-- App title is configurable: set `APP_TITLE=My Home Security` (or any string) in `config/.env`; it appears in the header and browser tab.
+- **App logic** → `config/settings.txt` (JSON; copy from `settings.txt.example`): zone list, columns, titles, poll interval, arming countdown UI, default arm mode, etc.
+- **Security / panel access** → `config/.env`: `DSC_HOST`, `DSC_USER`, `DSC_PASS`, `DSC_PIN` only.
+- **Custom zone names** → `config/zone_names.json` (copy from `zone_names.json.example` or edit in the app UI). See `dsc-panel/config/README.md` for the full split.
 
 ---
 
@@ -72,17 +73,19 @@ Ensure the `dsc-panel` directory (with `Dockerfile`, `docker-compose.yml`, `back
 cd dsc-panel
 mkdir -p config
 cp config/.env.example config/.env
+cp config/settings.txt.example config/settings.txt
+# optional: seed zone labels (strict JSON — no trailing comma on the last line)
+cp config/zone_names.json.example config/zone_names.json
 ```
 
-Edit `config/.env` and set:
+Edit `config/.env` (credentials only):
 
 - `DSC_HOST` — TL-150’s IP on your LAN (e.g. `192.168.1.10`)
 - `DSC_USER` — Usually `admin`
 - `DSC_PASS` — TL-150 web interface password
 - `DSC_PIN` — Your panel keypad PIN (used for arm/disarm)
-- Optionally `APP_TITLE` — Title in the header and browser tab (default: Home Security)
-- Optionally `POLL_SECS` — Poll interval in seconds (default `10`)
-- Optionally `ZONE_LIMIT` — Zones to show: whole count `8`, `16`, or `32`, or a list with ranges (e.g. `1-8,10,12,14` or `1-4,8,10,30-32`) (default `16`)
+
+Edit `config/settings.txt` for app logic: titles, `zone_list`, `poll_secs`, `arming_countdown_secs`, `zone_columns`, `default_arm_mode`, etc. Custom zone **names** live in `config/zone_names.json` (or edit in the UI). See `dsc-panel/config/README.md`.
 
 ### 3. Build and start the container
 
@@ -98,11 +101,11 @@ docker compose logs --tail=50
 curl -s http://localhost:8000/api/status | head -c 200
 ```
 
-Open **http://\<your-server-ip\>:8000** in a browser (or over VPN). You should see the status circle (click to arm or disarm), date/time, and zones in two columns. Click a zone **name** to edit its label (blur or Enter to save). Click a zone **number** or the **green/red dot** to see when it was last closed.
+Open **http://\<your-server-ip\>:8000** in a browser (or over VPN). You should see the status circle (click to arm or disarm), date/time, and zones in a grid (`zone_columns` in `settings.txt`). Click a zone **name** to edit its label (blur or Enter to save). Click a zone **number** or the **green/red dot** to see when it was last closed.
 
-### 5. Changing PIN, password, title, or zone count later
+### 5. Changing PIN, password, or panel options later
 
-Edit `config/.env` (e.g. `DSC_PASS`, `DSC_PIN`, `APP_TITLE`, `ZONE_LIMIT`, `APP_SHORT_NAME`), then:
+Edit **`config/.env`** (security / TL-150 access), **`config/settings.txt`** (app logic), or **`config/zone_names.json`** (custom zone labels), then:
 
 ```bash
 docker compose restart
@@ -120,10 +123,10 @@ No image rebuild is required.
 ## UI overview
 
 - **Status circle** — One control: when disarmed it shows “Ready” and “Arm” inside the ring; when armed it shows “Armed” and “Disarm”. Click the circle to arm (stay) or disarm. While arming, the circle shows “Arming” and is disabled.
-- **Zones** — Shown in two columns (e.g. 8 zones per column for 16 total). Each row has zone number, editable name, and a green (closed) or red (open) status dot.
+- **Zones** — Grid column count comes from `zone_columns` in `settings.txt`. Each row has zone number, editable name, and a green (closed) or red (open) status dot.
 - **Zone name** — Click the name to edit; blur or press Enter to save (a brief “Saved” appears).
 - **Last activity** — Click the zone number or the status dot to show when that zone was last closed (e.g. “CLOSED: 4 Minutes Ago”). Click again to hide.
-- **App title** — Set `APP_TITLE` in `config/.env` to change the header and browser tab text.
+- **App title / zone list / layout / arm mode** — `config/settings.txt`. **Custom zone names** — `config/zone_names.json` or the UI.
 
 ---
 
@@ -243,7 +246,10 @@ dsc-panel/
 │   ├── .env.example        # Template for config/.env
 │   ├── .env                # Your secrets (create from .env.example)
 │   ├── icons/              # PWA icons (optional; icon-16x16.png … icon-512x512.png, apple-touch-icon.png)
-│   └── zone_names.json     # Created on first run; editable zone labels
+│   ├── settings.txt.example
+│   ├── settings.txt        # App logic (copy from example; must be valid JSON)
+│   ├── zone_names.json.example
+│   └── zone_names.json     # Custom zone names (optional; copy from example or use UI)
 ├── backend/
 │   ├── main.py             # FastAPI app, SSE, zone names, status
 │   ├── scraper.py          # TL-150 HTTP client and HTML parser
