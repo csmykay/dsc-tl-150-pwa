@@ -403,7 +403,7 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 0.35rem;
-    font-size: 0.68rem;
+    font-size: calc(0.68rem + 3pt);
     color: #8b949e;
     line-height: 1.2;
     min-width: 8.5rem;
@@ -414,8 +414,8 @@
     gap: 0.35rem;
   }
   .leg-dot {
-    width: 10px;
-    height: 10px;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
     flex-shrink: 0;
   }

@@ -1,0 +1,10 @@
+---
+description: Docker build and compose are run by the maintainer on their own console, not by the agent.
+alwaysApply: true
+---
+
+# Local Docker build and deploy
+
+- The maintainer runs **`docker compose` build/up** (or equivalent) **locally on their machine or SSH console** when they want a new image running. Do not assume a successful remote build is required for a change to be “done.”
+- If **`push-image-to-host.sh`** finishes rsync but the embedded **`ssh … docker compose up -d --build`** step fails (e.g. missing `config/.env` on the path Compose uses), treat **code sync as sufficient** unless the user asks to fix remote layout. Do not redesign deploy flows just to make that automated step pass.
+- When suggesting deployment, prefer: sync sources, then remind the user they can build/restart on the host from their console as they already do.

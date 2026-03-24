@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Sync this directory to your Docker host over SSH, then build and restart there.
 # Docker is only used on the remote machine — nothing runs on your Mac.
+# If the final `ssh … docker compose` step fails (e.g. env path), you can still rely
+# on rsync and run `docker compose up -d --build` yourself on the host console.
 #
 # By default the whole `config/` directory is NOT rsynced so a remote symlink
 # (e.g. config → ~/docker-data/dsc-panel/config) is not replaced by a real folder.
